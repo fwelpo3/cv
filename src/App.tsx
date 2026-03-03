@@ -46,6 +46,7 @@ export default function App() {
   ]);
   const [chatInput, setChatInput] = useState('');
   const [isChatLoading, setIsChatLoading] = useState(false);
+  const [chatStatus, setChatStatus] = useState<string | null>(null);
   const [chatAttachments, setChatAttachments] = useState<ChatAttachment[]>([]);
   const [customApiKey, setCustomApiKey] = useState('');
   const [selectedModel, setSelectedModel] = useState('gemini-1.5-flash');
@@ -63,15 +64,14 @@ export default function App() {
     let lastError: any;
     for (let i = 0; i < maxRetries; i++) {
       try {
-        return await ai.models.generateContent({ model, contents, config });
+        setChatStatus(i > 0 ? `Google ist beschäftigt. Versuch ${i + 1}/${maxRetries}...` : "KI generiert Antwort...");
+        return await ai.models.generateContentStream({ model, contents, config });
       } catch (error: any) {
         lastError = error;
         const errorMsg = error?.message?.toLowerCase() || '';
-        // 503 (Service Unavailable) or 429 (Rate Limit)
         if (errorMsg.includes('503') || errorMsg.includes('high demand') || errorMsg.includes('429') || errorMsg.includes('quota') || errorMsg.includes('unavailable')) {
-          // Exponential backoff: 2s, 4s, 8s, 16s...
-          const waitTime = Math.pow(2, i) * 2000 + Math.random() * 1000;
-          console.log(`Gemini API busy. Retry ${i + 1}/${maxRetries} in ${Math.round(waitTime)}ms...`);
+          const waitTime = Math.pow(2, i) * 1500 + Math.random() * 500;
+          setChatStatus(`Warte ${Math.round(waitTime/1000)}s vor nächstem Versuch...`);
           await sleep(waitTime);
           continue;
         }
@@ -282,7 +282,7 @@ export default function App() {
         });
       }
 
-      const response = await generateWithRetry(
+      const stream = await generateWithRetry(
         ai,
         selectedModel,
         { parts },
@@ -291,13 +291,32 @@ export default function App() {
         }
       );
 
-      const botMessage: Message = {
+      let fullContent = '';
+      const botMessageId = Date.now();
+      
+      // Add initial empty bot message for streaming
+      setMessages(prev => [...prev, {
         role: 'bot',
-        content: response.text || 'Entschuldigung, ich konnte keine Antwort generieren.',
-        timestamp: new Date(),
-      };
+        content: '',
+        timestamp: new Date()
+      }]);
 
-      setMessages((prev) => [...prev, botMessage]);
+      setChatStatus(null);
+
+      for await (const chunk of stream) {
+        const chunkText = chunk.text;
+        if (chunkText) {
+          fullContent += chunkText;
+          setMessages(prev => {
+            const newMessages = [...prev];
+            newMessages[newMessages.length - 1] = {
+              ...newMessages[newMessages.length - 1],
+              content: fullContent
+            };
+            return newMessages;
+          });
+        }
+      }
     } catch (error: any) {
       console.error('Error calling Gemini API:', error);
       let errorMessage = 'Ups, da ist etwas schiefgelaufen. Bitte versuche es später noch einmal.';
@@ -634,7 +653,7 @@ export default function App() {
                 >
                   <div className="flex gap-3 items-center bg-zinc-800 border border-zinc-700 p-4 rounded-2xl rounded-tl-none shadow-sm">
                     <Loader2 className="w-4 h-4 text-emerald-500 animate-spin" />
-                    <span className="text-sm text-zinc-400">Denkt nach...</span>
+                    <span className="text-sm text-zinc-400">{chatStatus || "Denkt nach..."}</span>
                   </div>
                 </motion.div>
               )}
