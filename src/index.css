@@ -1,0 +1,39 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+}
+
+@layer base {
+  body {
+    @apply font-sans antialiased;
+  }
+}
+
+.prose {
+  @apply max-w-none;
+}
+
+.prose p {
+  @apply my-1 leading-relaxed;
+}
+
+.prose ul, .prose ol {
+  @apply my-2 pl-4;
+}
+
+.prose li {
+  @apply my-0.5;
+}
+
+.prose code {
+  @apply bg-zinc-800 px-1 py-0.5 rounded text-emerald-400 font-mono text-[0.9em];
+}
+
+.prose pre {
+  @apply bg-zinc-950 text-zinc-100 p-3 rounded-lg my-2 overflow-x-auto border border-zinc-800;
+}
+
+.prose pre code {
+  @apply bg-transparent p-0 text-inherit;
+}
