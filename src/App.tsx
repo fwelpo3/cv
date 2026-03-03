@@ -48,8 +48,9 @@ export default function App() {
   const [isChatLoading, setIsChatLoading] = useState(false);
   const [chatAttachments, setChatAttachments] = useState<ChatAttachment[]>([]);
   const [customApiKey, setCustomApiKey] = useState('');
-  const [selectedModel, setSelectedModel] = useState('gemini-3-flash-preview');
+  const [selectedModel, setSelectedModel] = useState('gemini-1.5-flash');
   const [showSettings, setShowSettings] = useState(false);
+  const [isTestingKey, setIsTestingKey] = useState(false);
   
   const galleryFileInputRef = useRef<HTMLInputElement>(null);
   const chatFileInputRef = useRef<HTMLInputElement>(null);
@@ -58,7 +59,7 @@ export default function App() {
 
   const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-  const generateWithRetry = async (ai: any, model: string, contents: any, config: any, maxRetries = 3) => {
+  const generateWithRetry = async (ai: any, model: string, contents: any, config: any, maxRetries = 5) => {
     let lastError: any;
     for (let i = 0; i < maxRetries; i++) {
       try {
@@ -66,8 +67,11 @@ export default function App() {
       } catch (error: any) {
         lastError = error;
         const errorMsg = error?.message?.toLowerCase() || '';
-        if (errorMsg.includes('503') || errorMsg.includes('high demand') || errorMsg.includes('429') || errorMsg.includes('quota')) {
+        // 503 (Service Unavailable) or 429 (Rate Limit)
+        if (errorMsg.includes('503') || errorMsg.includes('high demand') || errorMsg.includes('429') || errorMsg.includes('quota') || errorMsg.includes('unavailable')) {
+          // Exponential backoff: 2s, 4s, 8s, 16s...
           const waitTime = Math.pow(2, i) * 2000 + Math.random() * 1000;
+          console.log(`Gemini API busy. Retry ${i + 1}/${maxRetries} in ${Math.round(waitTime)}ms...`);
           await sleep(waitTime);
           continue;
         }
@@ -75,6 +79,32 @@ export default function App() {
       }
     }
     throw lastError;
+  };
+
+  const testApiKey = async () => {
+    if (!customApiKey.trim()) return;
+    setIsTestingKey(true);
+    try {
+      const ai = new GoogleGenAI({ apiKey: customApiKey.trim() });
+      const response = await ai.models.generateContent({
+        model: 'gemini-3-flash-preview',
+        contents: "Hi",
+      });
+      if (response.text) {
+        alert("✅ Erfolg! Die KI hat geantwortet.");
+      } else {
+        alert("⚠️ Verbindung steht, aber keine Textantwort erhalten.");
+      }
+    } catch (error: any) {
+      console.error("API Test Error:", error);
+      let msg = error.message || "Unbekannter Fehler";
+      if (msg.includes("API_KEY_INVALID")) msg = "Der API Key ist ungültig. Bitte prüfe ihn erneut.";
+      if (msg.includes("403")) msg = "Fehler 403: Zugriff verweigert. Ist die 'Generative Language API' in deinem Google Account aktiviert?";
+      if (msg.includes("429")) msg = "Fehler 429: Zu viele Anfragen (Rate Limit).";
+      alert(`❌ Test fehlgeschlagen:\n${msg}`);
+    } finally {
+      setIsTestingKey(false);
+    }
   };
 
   useEffect(() => {
@@ -474,14 +504,25 @@ export default function App() {
                         <Key size={12} />
                         Dein API Key (Erforderlich)
                       </label>
-                      <input 
-                        type="password"
-                        value={customApiKey}
-                        onChange={(e) => setCustomApiKey(e.target.value)}
-                        placeholder="Dein Gemini API Key..."
-                        className={`w-full bg-zinc-950 border rounded-xl px-4 py-2 text-sm text-white focus:ring-1 focus:ring-emerald-500 outline-none transition-colors ${!customApiKey.trim() ? 'border-red-900/50' : 'border-zinc-800'}`}
-                      />
-                      <p className="text-[9px] text-zinc-600 italic">AIzaSyAuwsKsqxKnyLZDjpiUmyUl16XJjau-TRI</p>
+                      <div className="flex gap-2">
+                        <input 
+                          type="password"
+                          value={customApiKey}
+                          onChange={(e) => setCustomApiKey(e.target.value)}
+                          placeholder="Dein Gemini API Key..."
+                          className={`flex-1 bg-zinc-950 border rounded-xl px-4 py-2 text-sm text-white focus:ring-1 focus:ring-emerald-500 outline-none transition-colors ${!customApiKey.trim() ? 'border-red-900/50' : 'border-zinc-800'}`}
+                        />
+                        <button 
+                          onClick={testApiKey}
+                          disabled={isTestingKey || !customApiKey.trim()}
+                          className="px-3 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-xl text-xs font-medium disabled:opacity-50 transition-colors"
+                        >
+                          {isTestingKey ? <Loader2 size={14} className="animate-spin" /> : "Test"}
+                        </button>
+                      </div>
+                      <p className="text-[9px] text-zinc-600 italic">
+                        Hol dir deinen Key hier: <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" className="text-emerald-500 underline">aistudio.google.com</a>
+                      </p>
                     </div>
                     <div className="space-y-2">
                       <label className="text-[10px] uppercase tracking-widest font-bold text-zinc-500 flex items-center gap-2">
@@ -493,17 +534,17 @@ export default function App() {
                         onChange={(e) => setSelectedModel(e.target.value)}
                         className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2 text-sm text-white focus:ring-1 focus:ring-emerald-500 outline-none appearance-none cursor-pointer"
                       >
-                        <optgroup label="Gemini 1.5 Series (Stable)">
-                          <option value="gemini-1.5-flash">Gemini 1.5 Flash</option>
-                          <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
-                        </optgroup>
-                        <optgroup label="Gemini 3 Series (Preview)">
+                        <optgroup label="Gemini 3 Series (Empfohlen)">
                           <option value="gemini-3-flash-preview">Gemini 3 Flash</option>
                           <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro</option>
                         </optgroup>
                         <optgroup label="Gemini 2.5 Series">
                           <option value="gemini-2.5-flash-latest">Gemini 2.5 Flash</option>
-                          <option value="gemini-2.5-flash-lite-latest">Gemini 2.5 Flash Lite</option>
+                          <option value="gemini-2.5-flash-lite-preview">Gemini 2.5 Flash Lite</option>
+                        </optgroup>
+                        <optgroup label="Legacy / Stable">
+                          <option value="gemini-1.5-flash">Gemini 1.5 Flash</option>
+                          <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
                         </optgroup>
                         <optgroup label="Specialized Models">
                           <option value="gemini-2.5-flash-preview-tts">Gemini 2.5 Flash TTS</option>
