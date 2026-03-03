@@ -48,8 +48,8 @@ export default function App() {
   const [isChatLoading, setIsChatLoading] = useState(false);
   const [chatStatus, setChatStatus] = useState<string | null>(null);
   const [chatAttachments, setChatAttachments] = useState<ChatAttachment[]>([]);
-  const [customApiKey, setCustomApiKey] = useState('');
-  const [selectedModel, setSelectedModel] = useState('gemini-1.5-flash');
+  const [customApiKey, setCustomApiKey] = useState('AIzaSyC6HsCIbhS49UVIlLLXeUQS2dnHeMhavxI');
+  const [selectedModel, setSelectedModel] = useState('gemini-3-flash-preview');
   const [showSettings, setShowSettings] = useState(false);
   const [isTestingKey, setIsTestingKey] = useState(false);
   
@@ -111,7 +111,54 @@ export default function App() {
     if (isLoggedIn) {
       fetchImages();
     }
-  }, [isLoggedIn]);
+
+    const handleGlobalPaste = (e: ClipboardEvent) => {
+      if (!isLoggedIn) return;
+      
+      const items = e.clipboardData?.items;
+      if (!items) return;
+
+      const imageItems = Array.from(items).filter(item => item.type.indexOf('image') !== -1);
+      if (imageItems.length === 0) return;
+
+      if (activeTab === 'gallery') setUploading(true);
+
+      const uploadPromises = imageItems.map(item => {
+        const blob = item.getAsFile();
+        if (!blob) return Promise.resolve();
+
+        return new Promise<void>((resolve) => {
+          const reader = new FileReader();
+          reader.onload = async (event) => {
+            const data = event.target?.result as string;
+            if (activeTab === 'gallery') {
+              try {
+                await uploadImage(`pasted-${Date.now()}.png`, data, true);
+              } catch (err) {
+                console.error("Paste upload failed", err);
+              }
+            } else {
+              const mimeType = data.split(';')[0].split(':')[1];
+              const base64 = data.split(',')[1];
+              setChatAttachments(prev => [...prev, { data: base64, mimeType, name: `pasted-image-${Date.now()}.png` }]);
+            }
+            resolve();
+          };
+          reader.readAsDataURL(blob);
+        });
+      });
+
+      Promise.all(uploadPromises).then(async () => {
+        if (activeTab === 'gallery') {
+          await fetchImages();
+          setUploading(false);
+        }
+      });
+    };
+
+    window.addEventListener('paste', handleGlobalPaste);
+    return () => window.removeEventListener('paste', handleGlobalPaste);
+  }, [isLoggedIn, activeTab]);
 
   useEffect(() => {
     if (activeTab === 'chat') {
@@ -154,31 +201,55 @@ export default function App() {
     }
   };
 
+  const uploadImage = async (name: string, data: string, silent = false) => {
+    if (!silent) setUploading(true);
+    try {
+      const res = await fetch('/api/images', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, data }),
+      });
+      if (!res.ok) throw new Error('Upload failed');
+      if (!silent) await fetchImages();
+    } catch (err) {
+      if (!silent) alert('Fehler beim Hochladen des Bildes.');
+      throw err;
+    } finally {
+      if (!silent) setUploading(false);
+    }
+  };
+
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    if (!file.type.startsWith('image/')) return;
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
 
     setUploading(true);
-    const reader = new FileReader();
-    reader.onloadend = async () => {
-      const base64String = reader.result as string;
-      try {
-        const res = await fetch('/api/images', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: file.name, data: base64String }),
+    try {
+      for (const file of Array.from(files)) {
+        if (!file.type.startsWith('image/')) continue;
+        
+        await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onloadend = async () => {
+            try {
+              const base64String = reader.result as string;
+              await uploadImage(file.name, base64String, true);
+              resolve(null);
+            } catch (err) {
+              reject(err);
+            }
+          };
+          reader.onerror = reject;
+          reader.readAsDataURL(file);
         });
-        if (!res.ok) throw new Error('Upload failed');
-        await fetchImages();
-      } catch (err) {
-        alert('Failed to upload image.');
-      } finally {
-        setUploading(false);
-        if (galleryFileInputRef.current) galleryFileInputRef.current.value = '';
       }
-    };
-    reader.readAsDataURL(file);
+      await fetchImages();
+    } catch (err) {
+      alert('Fehler beim Hochladen eines oder mehrerer Bilder.');
+    } finally {
+      setUploading(false);
+      if (galleryFileInputRef.current) galleryFileInputRef.current.value = '';
+    }
   };
 
   const deleteImage = async (id: number) => {
@@ -199,25 +270,6 @@ export default function App() {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-  };
-
-  const handlePaste = (e: React.ClipboardEvent) => {
-    const items = e.clipboardData.items;
-    for (let i = 0; i < items.length; i++) {
-      if (items[i].type.indexOf('image') !== -1) {
-        const blob = items[i].getAsFile();
-        if (blob) {
-          const reader = new FileReader();
-          reader.onload = (event) => {
-            const data = event.target?.result as string;
-            const mimeType = data.split(';')[0].split(':')[1];
-            const base64 = data.split(',')[1];
-            setChatAttachments(prev => [...prev, { data: base64, mimeType, name: `pasted-image-${Date.now()}.png` }]);
-          };
-          reader.readAsDataURL(blob);
-        }
-      }
-    }
   };
 
   const handleChatFileChange = (e: React.ChangeEvent<HTMLInputElement>, type: 'image' | 'doc') => {
@@ -247,6 +299,34 @@ export default function App() {
 
     if ((!content.trim() && (!attachments || attachments.length === 0)) || isChatLoading) return;
 
+    // Construct history from existing messages
+    const history = messages.map(msg => ({
+      role: msg.role === 'user' ? 'user' : 'model',
+      parts: [
+        { text: msg.content || " " }, // Ensure text is never empty
+        ...(msg.attachments?.map(att => ({
+          inlineData: {
+            data: att.data,
+            mimeType: att.mimeType
+          }
+        })) || [])
+      ]
+    }));
+
+    // Add the current message to history for the API call
+    const currentTurn = {
+      role: 'user' as const,
+      parts: [
+        { text: content || (attachments && attachments.length > 0 ? "Analysiere diese Anhänge." : " ") },
+        ...(attachments?.map(att => ({
+          inlineData: {
+            data: att.data,
+            mimeType: att.mimeType
+          }
+        })) || [])
+      ]
+    };
+
     if (!retryMessage) {
       const userMessage: Message = {
         role: 'user',
@@ -269,25 +349,12 @@ export default function App() {
 
       const ai = new GoogleGenAI({ apiKey });
       
-      const parts: any[] = [{ text: content || (attachments && attachments.length > 0 ? "Analysiere diese Anhänge." : "") }];
-      
-      if (attachments) {
-        attachments.forEach(att => {
-          parts.push({
-            inlineData: {
-              data: att.data,
-              mimeType: att.mimeType
-            }
-          });
-        });
-      }
-
       const stream = await generateWithRetry(
         ai,
         selectedModel,
-        { parts },
+        [...history, currentTurn], // Send full history
         {
-          systemInstruction: "Du bist ein hilfreicher, freundlicher und prägnanter KI-Assistent. Antworte auf Deutsch. Du kannst Bilder und Dokumente (PDF, Text, etc.) analysieren.",
+          systemInstruction: "Du bist ein hilfreicher, freundlicher und prägnanter KI-Assistent. Antworte auf Deutsch. Du hast Zugriff auf den bisherigen Chatverlauf und kannst dich auf frühere Aussagen beziehen. Du kannst Bilder und Dokumente analysieren.",
         }
       );
 
@@ -357,7 +424,13 @@ export default function App() {
             <input
               type="password"
               value={password}
-              onChange={(e) => setPassword(e.target.value)}
+              onChange={(e) => {
+                const val = e.target.value;
+                setPassword(val);
+                if (val === '1979') {
+                  setIsLoggedIn(true);
+                }
+              }}
               placeholder="was geht"
               className="w-full bg-transparent border-none text-zinc-800 text-center text-2xl font-light tracking-widest outline-none placeholder:text-zinc-800 cursor-default focus:placeholder:opacity-0 transition-all"
               autoFocus
@@ -417,7 +490,7 @@ export default function App() {
                 <span className="font-medium hidden sm:inline">Upload</span>
               </button>
             )}
-            <input type="file" ref={galleryFileInputRef} onChange={handleFileUpload} className="hidden" accept="image/*" />
+            <input type="file" ref={galleryFileInputRef} onChange={handleFileUpload} className="hidden" accept="image/*" multiple />
           </div>
         </div>
       </header>
@@ -499,6 +572,20 @@ export default function App() {
                   <span className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
                   {selectedModel}
                 </div>
+                <button 
+                  onClick={() => {
+                    if (confirm("Chatverlauf wirklich löschen?")) {
+                      setMessages([{
+                        role: 'bot',
+                        content: 'Chat gelöscht. Wie kann ich dir jetzt helfen?',
+                        timestamp: new Date(),
+                      }]);
+                    }
+                  }}
+                  className="text-[10px] uppercase tracking-wider font-bold text-zinc-600 hover:text-red-400 transition-colors"
+                >
+                  Verlauf leeren
+                </button>
               </div>
               <button 
                 onClick={() => setShowSettings(!showSettings)}
@@ -553,21 +640,13 @@ export default function App() {
                         onChange={(e) => setSelectedModel(e.target.value)}
                         className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2 text-sm text-white focus:ring-1 focus:ring-emerald-500 outline-none appearance-none cursor-pointer"
                       >
-                        <optgroup label="Gemini 3 Series (Empfohlen)">
-                          <option value="gemini-3-flash-preview">Gemini 3 Flash</option>
-                          <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro</option>
+                        <optgroup label="Gemini 3.1 Series">
+                          <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro (Preview)</option>
+                          <option value="gemini-3.1-flash-preview">Gemini 3.1 Flash (Preview)</option>
                         </optgroup>
-                        <optgroup label="Gemini 2.5 Series">
-                          <option value="gemini-2.5-flash-latest">Gemini 2.5 Flash</option>
-                          <option value="gemini-2.5-flash-lite-preview">Gemini 2.5 Flash Lite</option>
-                        </optgroup>
-                        <optgroup label="Legacy / Stable">
-                          <option value="gemini-1.5-flash">Gemini 1.5 Flash</option>
-                          <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
-                        </optgroup>
-                        <optgroup label="Specialized Models">
-                          <option value="gemini-2.5-flash-preview-tts">Gemini 2.5 Flash TTS</option>
-                          <option value="gemini-2.5-flash-native-audio-preview-12-2025">Gemini 2.5 Flash Audio</option>
+                        <optgroup label="Gemini 3.0 Series">
+                          <option value="gemini-3-flash-preview">Gemini 3 Flash (Standard)</option>
+                          <option value="gemini-3-pro-preview">Gemini 3 Pro (Preview)</option>
                         </optgroup>
                       </select>
                     </div>
@@ -720,7 +799,6 @@ export default function App() {
                     value={chatInput}
                     onChange={(e) => setChatInput(e.target.value)}
                     onKeyDown={(e) => e.key === 'Enter' && handleChatSend()}
-                    onPaste={handlePaste}
                     placeholder="Schreibe eine Nachricht oder füge Dateien ein..."
                     className="w-full pl-4 pr-12 py-3 bg-zinc-950 border border-zinc-800 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all text-white"
                   />
