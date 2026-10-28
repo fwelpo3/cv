@@ -207,6 +207,10 @@ export default function App() {
               className="w-full bg-transparent border-none text-zinc-800 text-center text-2xl font-light tracking-widest outline-none placeholder:text-zinc-800 cursor-default focus:placeholder:opacity-0 transition-all"
               autoFocus
             />
+            <button type="submit" disabled={!password.trim()}
+              className="mt-5 px-6 py-2 rounded-xl border border-zinc-800 bg-zinc-900 text-zinc-300 hover:text-white hover:border-emerald-700 disabled:opacity-30">
+              Anmelden
+            </button>
           </form>
         </motion.div>
       </div>
@@ -266,6 +270,17 @@ export default function App() {
           </div>
         </div>
       </header>
+
+      <nav className="md:hidden flex justify-center bg-zinc-950 border-b border-zinc-800 px-3 py-2 gap-2">
+        <button onClick={() => setActiveTab('gallery')}
+          className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-sm ${activeTab === 'gallery' ? 'bg-zinc-800 text-white' : 'text-zinc-500'}`}>
+          <ImageIcon size={16} /> Galerie
+        </button>
+        <button onClick={() => setActiveTab('chat')}
+          className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-sm ${activeTab === 'chat' ? 'bg-zinc-800 text-white' : 'text-zinc-500'}`}>
+          <MessageSquare size={16} /> Chats
+        </button>
+      </nav>
 
       <main className="flex-1 max-w-6xl mx-auto w-full p-6 flex flex-col">
         {activeTab === 'gallery' ? (
