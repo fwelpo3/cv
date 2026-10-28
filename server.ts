@@ -82,7 +82,7 @@ async function startServer() {
 
   if (sql) {
     try {
-      await sql\`
+      await sql`
         CREATE TABLE IF NOT EXISTS images (
           id SERIAL PRIMARY KEY,
           name TEXT NOT NULL,
@@ -90,9 +90,9 @@ async function startServer() {
           description TEXT,
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
-      \`;
-      await sql\`ALTER TABLE images ADD COLUMN IF NOT EXISTS description TEXT\`;
-      await sql\`
+      `;
+      await sql`ALTER TABLE images ADD COLUMN IF NOT EXISTS description TEXT`;
+      await sql`
         CREATE TABLE IF NOT EXISTS chat_messages (
           id BIGSERIAL PRIMARY KEY,
           room TEXT NOT NULL CHECK (room IN ('group','ai')),
@@ -103,8 +103,8 @@ async function startServer() {
           attachments JSONB NOT NULL DEFAULT '[]'::jsonb,
           created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
-      \`;
-      await sql\`CREATE INDEX IF NOT EXISTS idx_chat_room_client_id ON chat_messages (room, client_id, id DESC)\`;
+      `;
+      await sql`CREATE INDEX IF NOT EXISTS idx_chat_room_client_id ON chat_messages (room, client_id, id DESC)`;
     } catch (err) {
       console.error("Database initialization failed", err);
     }
@@ -139,7 +139,7 @@ async function startServer() {
   app.get("/api/images", async (_req, res) => {
     if (!sql) return res.status(503).json({ error: "Datenbank nicht konfiguriert." });
     try {
-      const records = await sql\`SELECT * FROM images ORDER BY created_at DESC\`;
+      const records = await sql`SELECT * FROM images ORDER BY created_at DESC`;
       return res.json(records);
     } catch (err) {
       console.error("Image listing failed", err);
@@ -153,7 +153,7 @@ async function startServer() {
     if (typeof name !== "string" || !name.trim() || typeof data !== "string" || !data.startsWith("data:image/"))
       return res.status(400).json({ error: "Name und Bild sind erforderlich." });
     try {
-      const records = await sql\`INSERT INTO images (name, data, description) VALUES (\${name.slice(0, 200)}, \${data}, '') RETURNING *\`;
+      const records = await sql`INSERT INTO images (name, data, description) VALUES (${name.slice(0, 200)}, ${data}, '') RETURNING *`;
       return res.json(records[0]);
     } catch (err) {
       console.error("Image upload failed", err);
@@ -166,7 +166,7 @@ async function startServer() {
     const id = Number(req.params.id);
     if (!Number.isSafeInteger(id) || id <= 0) return res.status(400).json({ error: "Ungültige ID" });
     try {
-      await sql\`DELETE FROM images WHERE id = \${id}\`;
+      await sql`DELETE FROM images WHERE id = ${id}`;
       return res.json({ success: true });
     } catch (err) {
       console.error("Image deletion failed", err);
@@ -183,12 +183,12 @@ async function startServer() {
     const before = typeof req.query.before === "string" && /^\d+$/.test(req.query.before)
       ? req.query.before : "9223372036854775807";
     try {
-      const records = await sql\`
+      const records = await sql`
         SELECT * FROM chat_messages
-        WHERE room = \${room} AND client_id = \${room === "ai" ? clientId : ""}
-          AND id < \${before}::bigint
+        WHERE room = ${room} AND client_id = ${room === "ai" ? clientId : ""}
+          AND id < ${before}::bigint
         ORDER BY id DESC LIMIT 100
-      \`;
+      `;
       return res.json(records.reverse());
     } catch (err) {
       console.error("Chat listing failed", err);
@@ -206,17 +206,17 @@ async function startServer() {
     catch (err: any) { return res.status(400).json({ error: err.message }); }
     if (!content && attachments.length === 0) return res.status(400).json({ error: "Nachricht fehlt." });
     try {
-      const recent = await sql\`
+      const recent = await sql`
         SELECT COUNT(*)::int AS total FROM chat_messages
-        WHERE room = 'group' AND sender = \${sender} AND created_at > NOW() - INTERVAL '1 minute'
-      \`;
+        WHERE room = 'group' AND sender = ${sender} AND created_at > NOW() - INTERVAL '1 minute'
+      `;
       if (Number(recent[0]?.total || 0) >= 15)
         return res.status(429).json({ error: "Zu viele Nachrichten. Bitte kurz warten." });
-      const records = await sql\`
+      const records = await sql`
         INSERT INTO chat_messages (room, client_id, role, sender, content, attachments)
-        VALUES ('group', '', 'user', \${sender}, \${content}, \${JSON.stringify(attachments)}::jsonb)
+        VALUES ('group', '', 'user', ${sender}, ${content}, ${JSON.stringify(attachments)}::jsonb)
         RETURNING *
-      \`;
+      `;
       return res.json(records[0]);
     } catch (err) {
       console.error("Group message insert failed", err);
@@ -241,23 +241,23 @@ async function startServer() {
       return res.status(400).json({ error: "Nachricht fehlt." });
 
     try {
-      const usage = await sql\`
+      const usage = await sql`
         SELECT COUNT(*)::int AS total FROM chat_messages
         WHERE room='ai' AND role='user' AND created_at > NOW() - INTERVAL '1 hour'
-      \`;
+      `;
       if (Number(usage[0]?.total || 0) >= 100)
         return res.status(429).json({ error: "Das stündliche KI-Limit der App ist erreicht." });
 
-      const inserted = await sql\`
+      const inserted = await sql`
         INSERT INTO chat_messages (room, client_id, role, sender, content, attachments)
-        VALUES ('ai', \${clientId}, 'user', 'Du', \${content}, \${JSON.stringify(attachments)}::jsonb)
+        VALUES ('ai', ${clientId}, 'user', 'Du', ${content}, ${JSON.stringify(attachments)}::jsonb)
         RETURNING *
-      \`;
-      const recent = await sql\`
+      `;
+      const recent = await sql`
         SELECT role, content, attachments FROM chat_messages
-        WHERE room='ai' AND client_id=\${clientId}
+        WHERE room='ai' AND client_id=${clientId}
         ORDER BY id DESC LIMIT 24
-      \`;
+      `;
       const contents = recent.reverse().map(msg => ({
         role: msg.role === "assistant" ? "model" : "user",
         parts: [
@@ -289,11 +289,11 @@ async function startServer() {
             send({ type: "delta", text: chunk.text });
           }
         }
-        const records = await sql\`
+        const records = await sql`
           INSERT INTO chat_messages (room, client_id, role, sender, content)
-          VALUES ('ai', \${clientId}, 'assistant', 'KI', \${fullContent || "(Keine Textantwort erhalten)"})
+          VALUES ('ai', ${clientId}, 'assistant', 'KI', ${fullContent || "(Keine Textantwort erhalten)"})
           RETURNING *
-        \`;
+        `;
         send({ type: "done", message: records[0] });
       } catch (err: any) {
         console.error("AI generation error:", err?.message || err);
